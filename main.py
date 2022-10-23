@@ -1,7 +1,7 @@
-from typing import Any, Tuple, Union
+from typing import Any, Tuple, Union, List
 
 from telegram import Update, ParseMode
-from telegram.ext import Updater, CallbackContext, CommandHandler, Defaults
+from telegram.ext import Updater, CallbackContext, CommandHandler, Defaults, DispatcherHandlerStop, TypeHandler
 from telegram.bot import Bot, BotCommand
 import logging
 import importlib
@@ -10,71 +10,45 @@ import config
 from _version import __version__
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                     level=logging.INFO)
+                    level=logging.INFO)
 
 
 def is_ascii(s):
+    """
+        Comprueba que no se han introducido tildes.
+    """
     return all(ord(c) < 128 for c in s)
 
 
-def check_args(context: CallbackContext) -> Tuple[bool, Union[bool, str], Union[bool, str], Union[bool, Any]]:
-    ok = class_name = msg = t = False
-    if len(context.args) == 0:
-        msg = 'Tienes que especificar un tipo'
-    elif not is_ascii(context.args[0]):
-        msg = 'Escribe el tipo sin tildes'
+def check_args(args: Union[List['str']]) -> Tuple[bool, str, str, Union[bool, Any]]:
+    """
+        Comprueba que los argumentos pasados no llevan tilde, estan presentes y devuelve un objeto del tipo instanciado.
+    """
+    ok = t = False
+    if isinstance(args, list) and len(args) == 1:
+        return ok, '', 'Tienes que especificar un tipo', t
+    elif not is_ascii(args[1]):
+        return ok, '', 'Escribe el tipo sin tildes', t
     else:
         ok = True
-        class_name = context.args[0].capitalize()
+        class_name = args[1].capitalize()
         MiTipo = getattr(importlib.import_module('tablatipos.tipos'), class_name)
         t = MiTipo()
-    return ok, class_name, msg, t
+        return ok, class_name, '', t
 
 
 def tabla_tipos(update: Update, context: CallbackContext):
-    update.message.reply_photo(photo='https://static.wikia.nocookie.net/pokemonreloaded/images/3/39/Efectividades.png/revision/latest/scale-to-width-down/680?cb=20141226072815&path-prefix=es')
-
-
-def eficaz_contra(update: Update, context: CallbackContext):
-    ok, class_name, msg, t = check_args(context=context)
-    if ok:
-        msg = f'El tipo *{class_name}* es __eficaz contra__: _{t.get_eficaz_contra()}_'
-    update.message.reply_text(text=msg)
-
-
-def poco_eficaz_contra(update: Update, context: CallbackContext):
-    ok, class_name, msg, t = check_args(context=context)
-    if ok:
-        msg = f'El tipo *{class_name}* es __poco eficaz contra__: _{t.get_poco_eficaz_contra()}_'
-    update.message.reply_text(text=msg)
-
-
-def resistente_ante(update: Update, context: CallbackContext):
-    ok, class_name, msg, t = check_args(context=context)
-    if ok:
-        msg = f'El tipo *{class_name}* es __resistente ante__: _{t.get_resistente_ante()}_'
-    update.message.reply_text(text=msg)
-
-
-def debil_ante(update: Update, context: CallbackContext):
-    ok, class_name, msg, t = check_args(context=context)
-    if ok:
-        msg = f'El tipo *{class_name}* es __debil ante__: _{t.get_debil_ante()}_'
-    update.message.reply_text(text=msg)
-
-
-def stats(update: Update, context: CallbackContext):
-    ok, class_name, msg, t = check_args(context=context)
-    if ok:
-        msg = f'''El tipo *{class_name}* es:
-\- eficaz contra: _{t.get_eficaz_contra()}_
-\- poco eficaz contra: _{t.get_poco_eficaz_contra()}_
-\- resistente ante: _{t.get_resistente_ante()}_
-\- debil ante: _{t.get_debil_ante()}_'''
-    update.message.reply_text(text=msg)
+    """
+        Devuelve una imagen con la tabla de tipos
+    """
+    update.message.reply_photo(
+        photo='https://static.wikia.nocookie.net/pokemonreloaded/images/3/39/Efectividades.png/revision/latest/scale-to-width-down/680?cb=20141226072815&path-prefix=es')
 
 
 def help(update: Update, context: CallbackContext):
+    """
+        Mensaje de ayuda con los comandos y sus descripciones.
+    """
     msg = f"""v{__version__}
 /help: Muestra un mensaje de ayuda
 /tabla\_tipos: Muestra la tabla de tipos
@@ -85,6 +59,36 @@ def help(update: Update, context: CallbackContext):
 /debil\_ante _<tipo>_: Tipos ante los que es débil
     """.replace('.', '\\.').replace('<', '\\<').replace('>', '\\>')
     update.message.reply_text(text=msg)
+
+
+def generic_cmd(cmd: str, args: List[str]) -> str:
+    """
+        Para ejecutar cualquiera de los 5 comandos de estadísticas de tipos.
+    """
+    ok, tipo, msg, t = check_args(args)
+    if ok:
+        if cmd != 'stats':
+            msg = f"El tipo *{tipo}* es __{' '.join(cmd.split('_'))}__: _{eval('t.get_' + cmd + '()')}_"
+        else:
+            msg = f'''El tipo *{tipo}* es:
+\- eficaz contra: _{t.get_eficaz_contra()}_
+\- poco eficaz contra: _{t.get_poco_eficaz_contra()}_
+\- resistente ante: _{t.get_resistente_ante()}_
+\- debil ante: _{t.get_debil_ante()}_'''
+    return msg
+
+
+def callback(update: Update, context: CallbackContext):
+    """
+        Para manejar los 5 comandos de estadisticas de tipos.
+    """
+    cmd_not_to_handle = ['stats', 'eficaz_contra', 'poco_eficaz_contra', 'resistente_ante', 'debil_ante']
+    cmd = update.effective_message.text.split()[0].lstrip('/')
+    logging.info(f'{update.effective_message.from_user.username}: {update.effective_message.text}')
+    if cmd in cmd_not_to_handle:
+        msg = generic_cmd(cmd, update.effective_message.text.split())
+        update.message.reply_text(text=msg)
+        raise DispatcherHandlerStop  # do not handle this command
 
 
 def main():
@@ -107,23 +111,14 @@ def main():
     dispatcher = updater.dispatcher
 
     # Command handlers
+    generic_handler = TypeHandler(Update, callback)
     help_handler = CommandHandler('help', help)
     tabla_tipos_handler = CommandHandler('tabla_tipos', tabla_tipos)
-    stats_handler = CommandHandler('stats', stats)
-    eficaz_contra_handler = CommandHandler('eficaz_contra', eficaz_contra)
-    poco_eficaz_contra_handler = CommandHandler('poco_eficaz_contra', poco_eficaz_contra)
-    resistente_ante_handler = CommandHandler('resistente_ante', resistente_ante)
-    debil_ante_handler = CommandHandler('debil_ante', debil_ante)
 
     # Adding handlers to the dispatcher
+    dispatcher.add_handler(generic_handler, -1)
     dispatcher.add_handler(help_handler)
     dispatcher.add_handler(tabla_tipos_handler)
-    dispatcher.add_handler(stats_handler)
-    dispatcher.add_handler(eficaz_contra_handler)
-    dispatcher.add_handler(poco_eficaz_contra_handler)
-    dispatcher.add_handler(resistente_ante_handler)
-    dispatcher.add_handler(debil_ante_handler)
-
 
     # Starts to listen
     updater.start_polling()
